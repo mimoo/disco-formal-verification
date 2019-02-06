@@ -1,0 +1,599 @@
+/*
+IK:
+  <- s
+  ...
+  -> e, es, s, ss
+  <- e, ee, se
+*/
+
+theory Disco_IK
+begin
+
+builtins: diffie-hellman, symmetric-encryption// xor
+functions: sponge/1
+
+
+///////////////////////////////////////
+// Rules: Pre-Messages
+///////////////////////////////////////
+
+//
+// <- s
+// ====
+
+rule Responder_Init:
+	let
+		s_pub = 'g'^~s_priv
+	in
+	// tamarin: `s_pub` is public knowledge to adversaries and initiators
+	[Fr(~s_priv)]--[Identity(~s_priv, s_pub)]->[!ResponderIdentity(~s_priv, s_pub), Out(s_pub)]
+
+///////////////////////////////////////
+// Rules: Messages
+///////////////////////////////////////
+
+//
+// Initiator: Initialize
+// ========================
+// an initiator as a long-term keypair that is not necessarily known
+// to adversaries, and that can be re-used with servers
+
+rule Initiator_Init:
+	let
+		s_pub = 'g'^~s_priv
+	in
+	[Fr(~s_priv)]--[Identity(~s_priv, s_pub)]->[!InitiatorIdentity(~s_priv, s_pub)]
+
+//
+// Initiator: Write First Message
+// ========================
+// write -> e, es, s, ss
+
+rule Initiator_WriteMsg1:
+	let
+		// dh
+		e_pub = 'g'^~e_priv
+		// init + prologue
+		input1 = <'prologue', 'AD', 'Noise_IK', 'strobe_init'>
+		// -> e
+		input2 = <e_pub, 'CLR', input1>
+		// -> es
+		es = rs^~e_priv
+		input3 = <es, 'AD', input2>
+		// -> s
+		input4 = <'ENC', input3>
+//		encrypted_s = sponge(input4) ⊕ s_pub
+		encrypted_s = senc(s_pub, sponge(input4))
+		input5 = <s_pub, input4>
+		// -> ss
+		ss = rs^~s_priv
+		input6 = <ss, 'AD', input5>
+		// -> payload1
+		input7 = <'ENC', input6>
+//		ciphertext1 = sponge(input7) ⊕ ~payload1
+		ciphertext1 = senc(~payload1, sponge(input7))
+		input8 = <~payload1, input7>
+		// -> tag1
+		input9 = <'MAC', input8>
+		tag1 = sponge(input9)
+		input10 = <'0000000000000000', input9>
+		// helpers
+		id = e_pub
+	in
+	[!InitiatorIdentity(~s_priv, s_pub), !ResponderIdentity(~unknown, rs), Fr(~e_priv), Fr(~payload1)] 
+		--[InitHandshake(e_pub, s_pub, rs), Sent1(e_pub, s_pub, rs, ~payload1)]->
+	[Initiator_0(e_pub, s_pub, rs, input10), Out(<rs, e_pub, encrypted_s, ciphertext1, tag1>)]
+
+// 
+// Responder: Read First Message, Write Second Message
+// ===================================================
+// read  -> e, es, s, ss
+// write <- e, ee, se
+
+rule Responder_ReadMsg1_WriteMsg2:
+	let
+		// dh
+ 		re = 'g'^unknown
+		e_pub = 'g'^~e_priv
+		// init + prologue
+		input1 = <'prologue', 'AD', 'Noise_IK', 'strobe_init'>
+		// ----------------------------------------------
+		// -> e
+		input2 = <re, 'CLR', input1>
+		// -> es
+		es = re^~s_priv 
+		input3 = <es, 'AD', input2>
+		// -> s
+		input4 = <'ENC', input3>
+		rs = 'g'^unknown2
+//		rs = sponge(input4) ⊕ encrypted_rs
+		rs = sdec(encrypted_rs, sponge(input4))
+		input5 = <rs, input4>
+		// -> ss
+		ss = rs^~s_priv
+		input6 = <ss, 'AD', input5>
+		// -> payload1
+		input7 = <'ENC', input6>
+//		payload1 = sponge(input7) ⊕ ciphertext1
+		payload1 = sdec(ciphertext1, sponge(input7))
+		input8 = <payload1, input7>
+		// -> tag1
+		input9 = <'MAC', input8>
+		tag1 = sponge(input9)
+		input10 = <'0000000000000000', input9>
+		// ----------------------------------------------
+		// <- e
+		input11 = <e_pub, 'CLR', input10>
+		// <- ee
+		ee = re^~e_priv
+		input12 = <ee, 'AD', input11>
+		// <- se
+		se = rs^~e_priv
+		input13 = <se, 'AD', input12>
+		// <- payload2
+		input14 = <'ENC', input13>
+//		ciphertext2 = sponge(input14) ⊕ ~payload2
+		ciphertext2 = senc(~payload2, sponge(input14))
+		input15 = <~payload2, input14>
+		// <- tag2
+		input16 = <'MAC', input15>
+		tag2 = sponge(input16)
+		input17 = <'0000000000000000', input16>
+		/// Split
+		/// =====
+		/// strobe: we don't care about RATCHET because this is implementation level mitigation
+		c1 = sponge(<'initiator', 'AD', input17>)
+		c2 = sponge(<'responder', 'AD', input17>)
+		// helpers
+		id = re
+		me = s_pub
+		them = rs
+	in
+	[!ResponderIdentity(~s_priv, s_pub), In(<s_pub, re, encrypted_rs, ciphertext1, tag1>), Fr(~e_priv), Fr(~payload2)]
+		// common theme: we use a peer's ephemeral key ~e_priv as a unique identifier as well
+		--[ResponderInit(id, me, them), Shared('responder', id, me, them, c1, c2), Received1(id, me, them, payload1), Sent2(id, me, them, ~payload2)]->
+	[Responder_final(id, me, them, c1, c2), Out(<re, e_pub, ciphertext2, tag2>)]
+	// Responder_final(session_id, my_id, their_id, c1, c2)	
+	// Out(<
+	// 	re: their public key as unique identifier for the session,
+	// 	e_pub, ciphertext2, tag2: noise handshake message
+	// )
+
+//
+// Initiator: Read Second Message
+// ==============================
+// read <- e, ee, se
+
+rule Initiator_ReadMsg2:
+let
+	// dh
+	re = 'g'^unknown
+	// <- e
+	input2 = <re, 'CLR', input1>
+	// <- ee
+	ee = re^~e_priv
+	input3 = <ee, 'AD', input2>
+	// <- se
+	se = re^~s_priv
+	input4 = <se, 'AD', input3>
+	// <- payload2
+	input5 = <'ENC', input4>
+//	payload2 = sponge(input5) ⊕ ciphertext2
+	payload2 = sdec(ciphertext2, sponge(input5))
+	input6 = <payload2, input5>
+	// <- tag2
+	input7 = <'MAC', input6>
+	tag2 = sponge(input7)
+	input8 = <'0000000000000000', input7>
+	// split
+	c1 = sponge(<'initiator', 'AD', input8>)
+	c2 = sponge(<'responder', 'AD', input8>)
+	// helpers
+	id = e_pub
+	me = s_pub
+	them = rs
+in
+	[Initiator_0(e_pub, s_pub, rs, input1), !InitiatorIdentity(~s_priv, s_pub), In(<e_pub, re, ciphertext2, tag2>)]
+		--[Shared('initiator', id, me, them, c1, c2), Received2(id, me, them, payload2)]->
+	[Initiator_final(id, me, them, c1, c2)]
+
+//
+// Post-Handshake
+// ==============================
+// ->
+// <-
+
+// Initiator -> Responder 
+rule Initiator_SendApplicationData:
+let
+	input1 = <'ENC', c1>
+//	ciphertext = sponge(input1) ⊕ ~plaintext
+	ciphertext = senc(~plaintext, sponge(input1))
+	input2 = <~plaintext, input1>
+	input3 = <'MAC', input2>
+	tag = sponge(input2)
+in
+	[Initiator_final(id, me, them, c1, c2), Fr(~plaintext)]
+		--[SentData('initiator', id, me, them, ~plaintext)]->
+	// tamarin: we kill the state to avoid loops
+	[Out(<id, ciphertext, tag>)]
+
+rule Responder_ReceiveApplicationData:
+let
+	input1 = <'ENC', c1>
+//	plaintext = sponge(input1) ⊕ ciphertext
+	plaintext = sdec(ciphertext, sponge(input1))
+	input2 = <plaintext, input1>
+	input3 = <'MAC', input2>
+	tag = sponge(input2)
+in
+	[Responder_final(id, me, them, c1, c2), In(<id, ciphertext, tag>)]
+		--[ReceivedAppData('responder', id, me, them, plaintext)]->
+	[]
+
+// Responder -> Initiator
+rule Responder_SendApplicationData:
+let
+	input1 = <'ENC', c2>
+//	ciphertext = sponge(input1) ⊕ ~plaintext
+	ciphertext = senc(~plaintext, sponge(input1))
+	input2 = <~plaintext, input1>
+	input3 = <'MAC', input2>
+	tag = sponge(input2)
+in
+	[Responder_final(id, me, them, c1, c2), Fr(~plaintext)]
+		--[SentData('responder', id, me, them, ~plaintext)]->
+	[Out(<id, ciphertext, tag>)]
+
+rule Initiator_ReceiveApplicationData:
+let
+	input1 = <'ENC', c2>
+//	plaintext = sponge(input1) ⊕ ciphertext
+	plaintext = sdec(ciphertext, sponge(input1))
+	input2 = <plaintext, input1>
+	input3 = <'MAC', input2>
+	tag = sponge(input2)
+in
+	[Initiator_final(id, me, them, c1, c2), In(<id, ciphertext, tag>)]
+		--[ReceivedAppData('initiator', id, me, them, plaintext)]->
+	[]
+
+
+///////////////////////////////////////
+// Rules: Lemma Helpers
+///////////////////////////////////////
+
+// allows us to model what happens when a long-term static key `s` is broken
+rule Attack_s_revealed:
+	[!InitiatorIdentity(~s_priv, s_pub)]--[Reveal(s_pub)]->[Out(~s_priv)]
+rule Attack_rs_revealed:
+	[!ResponderIdentity(~s_priv, s_pub)]--[Reveal(s_pub)]->[Out(~s_priv)]
+
+///////////////////////////////////////
+// Lemmas: Sanity Checks
+///////////////////////////////////////
+
+//
+// Can we run the protocol?
+// ========================
+// These are "exists-trace" lemmas to see if we can go through 
+// the state transitions as intended.
+
+// first handshake payload is sent and received
+lemma Payload1Received:
+exists-trace
+"
+	Ex id initiator responder payload1 #i #j . 
+		(
+			Sent1(id, initiator, responder, payload1) @ #i & 
+			Received1(id, responder, initiator, payload1) @ #j &
+			#i < #j
+		)
+"
+
+// TODO: include that Reaveal never happens as well
+
+// second handshake payload is sent and received
+lemma Payload2Received:
+exists-trace
+"
+	Ex id initiator responder payload1 payload2 #i #j #l . 
+		(
+			Sent1(id, initiator, responder, payload1) @ #i & 
+
+			Received1(id, responder, initiator, payload1) @ #j &
+			Sent2(id, responder, initiator, payload2) @ #j &
+
+			Received2(id, initiator, responder, payload2) @ #l &
+
+			#i < #j &
+			#j < #l
+		)
+"
+
+// correct session keys can be negotiated
+lemma SessionEstablished:
+exists-trace
+"
+	Ex id initiator responder c1 c2 #i #j . (
+		Shared('initiator', id, initiator, responder, c1, c2) @ #i & 
+		Shared('responder', id, responder, initiator, c1, c2) @ #j
+	)
+"
+
+// app data messages can be sent
+lemma AppDataInitiator:
+exists-trace
+"
+	Ex id me them plaintext #t1 #t2 . 
+	SentData('initiator', id, me, them, plaintext) @ #t1 & 
+	ReceivedAppData('responder', id, them, me, plaintext) @ #t2 &
+	#t1 < #t2
+"
+lemma AppDataResponder:
+exists-trace
+"
+	Ex id me them plaintext #t1 #t2 . 
+	SentData('responder', id, me, them, plaintext) @ #t1 & 
+	ReceivedAppData('initiator', id, them, me, plaintext) @ #t2 &
+	#t1 < #t2
+"
+
+//
+// Does the protocol makes sense?
+// ==============================
+// These lemmas check that some states can only happen only due to honest behavior.
+
+// TODO: include in all these that Reveal() never happened
+
+// session keys are negotiated by A and B => session was started by A and B prior
+lemma CorrectPathToFinal:
+"
+	All id initiator responder c1 c2 #i #j . (
+		Shared('initiator', id, initiator, responder, c1, c2) @ #i & 
+		Shared('responder', id, responder, initiator, c1, c2) @ #j
+	)
+	==>
+	(
+		Ex #k #l payload1. 
+		Sent1(id, initiator, responder, payload1) @k & 
+		Received1(id, responder, initiator, payload1) @ #l &
+
+	 	#k < #l &
+	 	#l = #j & 
+	 	#j < #i
+	)
+"
+
+// app data is sent and received correctly => session was honest
+// TODO: is this true though? the adversary can make up an initiator...
+// and this won't create a fact
+lemma CorrectPathToAppDataInitiator:
+"
+	All id me them plaintext  #t4 #t5 . (
+		SentData('responder', id, me, them, plaintext) @ #t4 & 
+		ReceivedAppData('initiator', id, them, me, plaintext) @ #t5 &
+		#t4 < #t5
+	)
+	==>
+	(
+		Ex #t1 #t2 #t3 c1 c2 payload1. 
+
+		Sent1(id, me, them, payload1) @t1 & 
+		Received1(id, them, me, payload1) @ #t2 &
+		Shared('responder', id, them, me, c1, c2) @ #t2 &
+		Shared('initiator', id, me, them, c1, c2) @ #t3 & 
+
+	 	#t1 < #t2 &
+	 	#t2 < #t3
+	)
+"
+
+///////////////////////////////////////
+// Lemmas: Key Security 
+///////////////////////////////////////
+//
+// TODO , TKTK
+// should probably add more stuff than just the noise properties
+// stuff like: keys cannot be extracted if the participants are honest and no leak has occured
+
+
+lemma KeySecrecy:
+	"
+	All e_priv e_pub #i #j . (
+		// for all identities created (initiator or responder)
+		Identity(e_priv, e_pub) @ #i &
+		// where the private key of the identity is known to the attacker
+		K(e_priv) @ #j
+	)	==> Ex #k . (Reveal(e_pub) @ #k & #k < j) // it must be that it was revealed
+	"
+
+lemma SessionSecrecy:
+	"
+	All id initiator responder init_priv resp_priv c1 c2 #i #j #t1 #t2 . (
+		// for all successful sessions between initiator and responder
+		Shared('responder', id, responder, initiator, c1, c2) @ #i &
+		Shared('initiator', id, initiator, responder, c1, c2) @ #j & 
+		// where initiator and responder are honest actors
+		Identity(init_priv, initiator) @ #t1 & #t1 < #j &
+		Identity(resp_priv, responder) @ #t2 & #t2 < #i
+	) ==> (
+		// the adversary NEVER learns these session keys, even later
+		not ( (Ex #m . K(c1) @ #m) | (Ex #m . K(c2) @ #m) ) |
+		// or their keys were revealed before the session
+		(Ex #k . Reveal(initiator) @ #k & #k < #j) |
+		(Ex #k . Reveal(responder) @ #k & #k < #j)
+	)
+	"
+
+lemma InitiatorSession:
+	"
+	All id initiator responder resp_priv c1 c2 #i #t2 . (
+		// all session the initiator successfuly negotiates 
+		Shared('initiator', id, initiator, responder, c1, c2) @ #i &
+		// with an honest responder
+		Identity(resp_priv, responder) @ #t2 & #t2 < #i
+	)
+	==> (
+		// implies NO leakage of one of the session keys
+		not((Ex #k . K(c1) @ #k) | (Ex #k . K(c2) @ #k)) |
+		// or leakage of initiator ltk before the session happened
+		(Ex #k . Reveal(initiator) @ #k & #k < #i) |
+		// or leakage of the responder ltk before the session happened
+		(Ex #k . Reveal(responder) @ #k & #k < #i)
+	)
+	"
+
+lemma ResponderSession:
+	"
+	All id initiator responder init_priv c1 c2 #i #t2 . (
+		// all session the responder successfuly negotiates
+		Shared('responder', id, responder, initiator, c1, c2) @ #i &
+		// with an honest initiator
+		Identity(init_priv, initiator) @ #t2 & #t2 < #i
+	)	==> (
+		// implies NO leakage of one of the session keys
+		not((Ex #k . K(c1) @ #k) | (Ex #k . K(c2) @ #k)) |
+		// or leakage of initiator ltk before the session happened
+		(Ex #k . Reveal(initiator) @ #k & #k < #i) |
+		// or leakage of the responder ltk before the session happened
+		(Ex #k . Reveal(responder) @ #k & #k < #i)
+	)
+	"
+
+///////////////////////////////////////
+// Lemmas: Payload Security Property
+///////////////////////////////////////
+//
+// see the Noise Protocol Framework specification
+// section 7.7. Payload security properties
+//
+// IK                 src       dst
+//   <- s
+//   ...
+//   -> e, es, s, ss   1         2
+//   <- e, ee, se      2         4
+//   ->                2         5
+//   <-                2         5
+//
+//
+// TKTK
+// I think a better plan is to write the lemmas for all these numbers
+// and prove all of them. For example, always check if something is replayable. etc.
+
+// -> e, es, s, ss   1
+// ===================
+// Sender authentication vulnerable to key-compromise 
+// impersonation (KCI). The sender authentication is based 
+// on a static-static DH ("ss") involving both parties' 
+// static key pairs. If the recipient's long-term private key 
+// has been compromised, this authentication can be forged. 
+// Note that a future version of Noise might include signatures, 
+// which could improve this security property, but brings other 
+// trade-offs.
+
+// sanity check:
+// =============
+// 1. if the responder static-key is compromised @ t1
+// 		=> Exists a payload1 @ t2 that is forged by an adversary who don't know the initiator's static-key
+
+lemma payload1_src_1_check:
+	"
+	// if static public key of A is compromised => 
+	All responder_s #t1 . Reveal(responder_s) @ #t1 ==>
+	// Exists a session (id) with an (impersonated) initiator where payload1 is known to adversary
+	Ex id initiator payload1 #t2 #t3 . (
+		K(payload1) @ #t2 & 
+		Received1(id, responder_s, initiator, payload1) @ #t3 &
+		#t1 < #t2 &
+		#t2 < #t3
+	)
+	" 
+
+// proof:
+// ======
+// 1. for all sessions where both the initiator and responder are not corrupted => the adversary doesn't know the payload
+
+lemma real:
+	"
+	All id initiator responder payload1 #i . (
+		// for all session 
+		Received1(id, responder, initiator, payload1) @ #i &
+		// where initiator (if honest) was not compromised before
+		not (Ex #k . Reveal(initiator) @ #k & #k < #i) &
+		// and responder was not compromised before
+		not (Ex #k . Reveal(responder) @ #k & #k < #i)
+	) ==> (
+		// the payload1 cannot be known to the adversary
+		not (Ex #m . K(payload1) @ #m)
+	)
+	"
+
+// this should be equivalent:
+lemma real_2:
+	"
+	All id initiator responder payload1 #i . 
+		// for all session 
+		Received1(id, responder, initiator, payload1) @ #i
+		==> (
+		// implies payload is not known to the adversary
+		not (Ex #m . K(payload1) @ #m) |
+		// or initiator (if honest) was compromised before the session happened
+		(Ex #k . Reveal(initiator) @ #k & #k < #i) |
+		// or responder was compromised before the session hapened
+		(Ex #k . Reveal(responder) @ #k & #k < #i)
+	)
+	"
+
+// -> e, es, s, ss             2
+// =============================
+// Encryption to a known recipient, forward secrecy for sender 
+// compromise only, vulnerable to replay. This payload is encrypted 
+// based only on DHs involving the recipient's static key pair. 
+// If the recipient's static private key is compromised, even at 
+// a later date, this payload can be decrypted. This message can also 
+// be replayed, since there's no ephemeral contribution from the recipient.
+
+// translation:
+// 1. if $initiator ltk compromised but $responder ltk not compromised => All their previous session's payload1  are not compromised
+// 2. if $responder ltk compromised => All session between initiator and responder are previously compromised
+// 3. replay possible
+
+
+
+
+// replay
+
+lemma replay1:
+	"
+	All id responder initiator payload1 #i . (
+		// for all payloads received by an (honest) responder
+		Received1(id, responder, initiator, payload1) @ #i
+	) ==> (
+		// it exists another session with the same payload
+		Ex id2 #t2 . Received1(id2, responder, initiator, payload1) @ #t2 &
+		// and it is not the same session
+		id != id2
+		// - payload is fresh, so it can't happen by pure luck
+		// - doesn't matter if initiator is adversary or real (honest)
+	)
+	"
+
+// similar to replay1
+
+lemma replay2:
+	"
+	All id responder initiator payload2 #i . (
+		Received2(id, initiator, responder, payload2) @ #i
+	) ==> (
+		Ex id2 #t2 . Received2(id2, initiator, responder, payload2) @ #t2 &
+		id != id2
+	)
+	"
+
+// end
+
+end
+
+
+
