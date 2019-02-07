@@ -9,7 +9,7 @@ IK:
 theory Disco_IK
 begin
 
-builtins: diffie-hellman, symmetric-encryption// xor
+builtins: diffie-hellman, xor
 functions: sponge/1
 
 
@@ -26,7 +26,9 @@ rule Responder_Init:
 		s_pub = 'g'^~s_priv
 	in
 	// tamarin: `s_pub` is public knowledge to adversaries and initiators
-	[Fr(~s_priv)]--[Identity(~s_priv, s_pub)]->[!ResponderIdentity(~s_priv, s_pub), Out(s_pub)]
+	[Fr(~s_priv)]
+	--[Identity(~s_priv, s_pub)]->
+	[!ResponderIdentity(~s_priv, s_pub), Out(s_pub)]
 
 ///////////////////////////////////////
 // Rules: Messages
@@ -62,16 +64,14 @@ rule Initiator_WriteMsg1:
 		input3 = <es, 'AD', input2>
 		// -> s
 		input4 = <'ENC', input3>
-//		encrypted_s = sponge(input4) ⊕ s_pub
-		encrypted_s = senc(s_pub, sponge(input4))
+		encrypted_s = sponge(input4) ⊕ s_pub
 		input5 = <s_pub, input4>
 		// -> ss
 		ss = rs^~s_priv
 		input6 = <ss, 'AD', input5>
 		// -> payload1
 		input7 = <'ENC', input6>
-//		ciphertext1 = sponge(input7) ⊕ ~payload1
-		ciphertext1 = senc(~payload1, sponge(input7))
+		ciphertext1 = sponge(input7) ⊕ ~payload1
 		input8 = <~payload1, input7>
 		// -> tag1
 		input9 = <'MAC', input8>
@@ -106,16 +106,14 @@ rule Responder_ReadMsg1_WriteMsg2:
 		// -> s
 		input4 = <'ENC', input3>
 		rs = 'g'^unknown2
-//		rs = sponge(input4) ⊕ encrypted_rs
-		rs = sdec(encrypted_rs, sponge(input4))
+		rs = sponge(input4) ⊕ encrypted_rs
 		input5 = <rs, input4>
 		// -> ss
 		ss = rs^~s_priv
 		input6 = <ss, 'AD', input5>
 		// -> payload1
 		input7 = <'ENC', input6>
-//		payload1 = sponge(input7) ⊕ ciphertext1
-		payload1 = sdec(ciphertext1, sponge(input7))
+		payload1 = sponge(input7) ⊕ ciphertext1
 		input8 = <payload1, input7>
 		// -> tag1
 		input9 = <'MAC', input8>
@@ -132,8 +130,7 @@ rule Responder_ReadMsg1_WriteMsg2:
 		input13 = <se, 'AD', input12>
 		// <- payload2
 		input14 = <'ENC', input13>
-//		ciphertext2 = sponge(input14) ⊕ ~payload2
-		ciphertext2 = senc(~payload2, sponge(input14))
+		ciphertext2 = sponge(input14) ⊕ ~payload2
 		input15 = <~payload2, input14>
 		// <- tag2
 		input16 = <'MAC', input15>
@@ -178,8 +175,7 @@ let
 	input4 = <se, 'AD', input3>
 	// <- payload2
 	input5 = <'ENC', input4>
-//	payload2 = sponge(input5) ⊕ ciphertext2
-	payload2 = sdec(ciphertext2, sponge(input5))
+	payload2 = sponge(input5) ⊕ ciphertext2
 	input6 = <payload2, input5>
 	// <- tag2
 	input7 = <'MAC', input6>
@@ -207,22 +203,20 @@ in
 rule Initiator_SendApplicationData:
 let
 	input1 = <'ENC', c1>
-//	ciphertext = sponge(input1) ⊕ ~plaintext
-	ciphertext = senc(~plaintext, sponge(input1))
+	ciphertext = sponge(input1) ⊕ ~plaintext
 	input2 = <~plaintext, input1>
 	input3 = <'MAC', input2>
 	tag = sponge(input2)
 in
 	[Initiator_final(id, me, them, c1, c2), Fr(~plaintext)]
-		--[SentData('initiator', id, me, them, ~plaintext)]->
+		--[SentAppData('initiator', id, me, them, ~plaintext)]->
 	// tamarin: we kill the state to avoid loops
 	[Out(<id, ciphertext, tag>)]
 
 rule Responder_ReceiveApplicationData:
 let
 	input1 = <'ENC', c1>
-//	plaintext = sponge(input1) ⊕ ciphertext
-	plaintext = sdec(ciphertext, sponge(input1))
+	plaintext = sponge(input1) ⊕ ciphertext
 	input2 = <plaintext, input1>
 	input3 = <'MAC', input2>
 	tag = sponge(input2)
@@ -235,21 +229,19 @@ in
 rule Responder_SendApplicationData:
 let
 	input1 = <'ENC', c2>
-//	ciphertext = sponge(input1) ⊕ ~plaintext
-	ciphertext = senc(~plaintext, sponge(input1))
+	ciphertext = sponge(input1) ⊕ ~plaintext
 	input2 = <~plaintext, input1>
 	input3 = <'MAC', input2>
 	tag = sponge(input2)
 in
 	[Responder_final(id, me, them, c1, c2), Fr(~plaintext)]
-		--[SentData('responder', id, me, them, ~plaintext)]->
+		--[SentAppData('responder', id, me, them, ~plaintext)]->
 	[Out(<id, ciphertext, tag>)]
 
 rule Initiator_ReceiveApplicationData:
 let
 	input1 = <'ENC', c2>
-//	plaintext = sponge(input1) ⊕ ciphertext
-	plaintext = sdec(ciphertext, sponge(input1))
+	plaintext = sponge(input1) ⊕ ciphertext
 	input2 = <plaintext, input1>
 	input3 = <'MAC', input2>
 	tag = sponge(input2)
@@ -326,7 +318,7 @@ lemma AppDataInitiator:
 exists-trace
 "
 	Ex id me them plaintext #t1 #t2 . 
-	SentData('initiator', id, me, them, plaintext) @ #t1 & 
+	SentAppData('initiator', id, me, them, plaintext) @ #t1 & 
 	ReceivedAppData('responder', id, them, me, plaintext) @ #t2 &
 	#t1 < #t2
 "
@@ -334,7 +326,7 @@ lemma AppDataResponder:
 exists-trace
 "
 	Ex id me them plaintext #t1 #t2 . 
-	SentData('responder', id, me, them, plaintext) @ #t1 & 
+	SentAppData('responder', id, me, them, plaintext) @ #t1 & 
 	ReceivedAppData('initiator', id, them, me, plaintext) @ #t2 &
 	#t1 < #t2
 "
@@ -371,7 +363,7 @@ lemma CorrectPathToFinal:
 lemma CorrectPathToAppDataInitiator:
 "
 	All id me them plaintext  #t4 #t5 . (
-		SentData('responder', id, me, them, plaintext) @ #t4 & 
+		SentAppData('responder', id, me, them, plaintext) @ #t4 & 
 		ReceivedAppData('initiator', id, them, me, plaintext) @ #t5 &
 		#t4 < #t5
 	)
@@ -498,15 +490,20 @@ lemma ResponderSession:
 // 		=> Exists a payload1 @ t2 that is forged by an adversary who don't know the initiator's static-key
 
 lemma payload1_src_1_check:
+exists-trace
 	"
-	// if static public key of A is compromised => 
-	All responder_s #t1 . Reveal(responder_s) @ #t1 ==>
-	// Exists a session (id) with an (impersonated) initiator where payload1 is known to adversary
-	Ex id initiator payload1 #t2 #t3 . (
-		K(payload1) @ #t2 & 
-		Received1(id, responder_s, initiator, payload1) @ #t3 &
-		#t1 < #t2 &
-		#t2 < #t3
+	// if static public key of (honest) responder is compromised => 
+	All responder #i . Reveal(responder) @ #i 
+	==>
+	Ex id initiator init_priv payload1 #t1 #t2 #t3 . (
+		// Exists an (honest) initiator
+		Identity(init_priv, initiator) @ #t1 &
+		// and payload1 is known to the adversary
+		K(payload1) @ #t2 & #i < #t2 & #t2 < #t3 &
+		// and it is received as coming from the initiator
+		Received1(id, responder, initiator, payload1) @ #t3 & #i < #t3 &
+		// and initiator did not sent payload1 to the responder
+		not (Ex #k . Sent1(id, initiator, responder, payload1) @ #k)
 	)
 	" 
 
@@ -514,7 +511,7 @@ lemma payload1_src_1_check:
 // ======
 // 1. for all sessions where both the initiator and responder are not corrupted => the adversary doesn't know the payload
 
-lemma real:
+lemma payload1_src_1_proof:
 	"
 	All id initiator responder payload1 #i . (
 		// for all session 
@@ -530,7 +527,8 @@ lemma real:
 	"
 
 // this should be equivalent:
-lemma real_2:
+
+lemma payload1_src_1_proof_eq:
 	"
 	All id initiator responder payload1 #i . 
 		// for all session 
@@ -554,44 +552,222 @@ lemma real_2:
 // a later date, this payload can be decrypted. This message can also 
 // be replayed, since there's no ephemeral contribution from the recipient.
 
-// translation:
-// 1. if $initiator ltk compromised but $responder ltk not compromised => All their previous session's payload1  are not compromised
-// 2. if $responder ltk compromised => All session between initiator and responder are previously compromised
-// 3. replay possible
 
+// sanity check:
+// =============
+// 1. responder ltk compromised at any time before or after payload was received => payload compromised
+// 2. replay
 
-
-
-// replay
-
-lemma replay1:
+lemma payload1_dst_2_check:
+exists-trace
 	"
-	All id responder initiator payload1 #i . (
-		// for all payloads received by an (honest) responder
-		Received1(id, responder, initiator, payload1) @ #i
+	Ex id responder initiator payload1 #t1 #t3 #t4 #t5. 
+		// payload1 sent honestly
+		Sent1(id, initiator, responder, payload1) @ #t1 &
+		// payload1 received honestly
+		Received1(id, responder, initiator, payload1) @ #t3 & 
+		// the responder was not compromised (by Reveal at least)
+		not(Ex #t2 . Reveal(responder) @ #t2 & #t2 < #t3) &
+		// responder is then compromised (by Reveal)
+		Reveal(responder) @ #t4 & #t3 < #t4 &
+	  // adversary learns payload1 after that
+		K(payload1) @ #t5 & #t4 < #t5
+	"
+
+lemma payload1_replay_check:
+exists-trace
+	"
+	Ex id responder initiator payload1 #i #j.
+	// for all payload1 received
+	Received1(id, responder, initiator, payload1) @ #i &
+	// exists the same payload1 received at a different time
+	Received1(id, responder, initiator, payload1) @ #j & 
+	not #i = #j
+	"
+
+// proof:
+// ======
+// 1. responder ltk compromised at any time before or after payload was received => payload compromised
+// 2. replay
+
+lemma payload1_dst_2_proof:
+	"
+	All id responder initiator payload1 #t1 #t2 . (
+		// payload1 received
+		Received1(id, responder, initiator, payload1) @ #t1 & 
+		// payload1 known later
+		K(payload1) @ #t2 & #t1 < #t2 &
+		// but not before 
+		not (Ex #t0 . K(payload1) @ #t0 & #t0 < #t1)
 	) ==> (
-		// it exists another session with the same payload
-		Ex id2 #t2 . Received1(id2, responder, initiator, payload1) @ #t2 &
-		// and it is not the same session
-		id != id2
-		// - payload is fresh, so it can't happen by pure luck
-		// - doesn't matter if initiator is adversary or real (honest)
+		// must be because responder was compromised
+		Ex #t3 . Reveal(responder) @ #t3 & #t1 < #t3
 	)
 	"
 
-// similar to replay1
-
-lemma replay2:
+lemma payload1_replay:
 	"
-	All id responder initiator payload2 #i . (
-		Received2(id, initiator, responder, payload2) @ #i
-	) ==> (
-		Ex id2 #t2 . Received2(id2, initiator, responder, payload2) @ #t2 &
-		id != id2
+	All id responder initiator payload1 #i .
+	// for all payload1 received
+	Received1(id, responder, initiator, payload1) @ #i ==> (
+		// exists the same payload1 received later
+		Ex #j . Received1(id, responder, initiator, payload1) @ #j & #i < #j
 	)
 	"
 
-// end
+// <- e, ee, se      2         
+// ===================
+// Sender authentication resistant to key-compromise impersonation (KCI). 
+// The sender authentication is based on an ephemeral-static DH 
+// ("es" or "se") between the sender's static key pair and the recipient's 
+// ephemeral key pair. Assuming the corresponding private keys are secure, 
+// this authentication cannot be forged.
+
+lemma payload1_src_2_check:
+	"
+	Ex id initiator responder payload2 #t0 #t2 . (
+		// payload2 was received
+		Received2(id, initiator, responder, payload2) @ #t2 &
+		// but was never sent honestly
+		not (Ex #t1 . Sent2(id, responder, initiator, payload2) @ #t1 & #t1 < #t2) & 
+		// implies responder corrupted
+		Reveal(responder) @ #t0 & #t0 < #t2
+	)
+	"
+
+lemma payload1_src_2_proof:
+	"
+	All id initiator responder resp_priv payload2 #init #t2 . (
+		// payload2 was received by an honest initiator
+		Received2(id, initiator, responder, payload2) @ #t2 &
+		// but was never sent honestly by the responder
+		not (Ex #t1 . Sent2(id, responder, initiator, payload2) @ #t1 & #t1 < #t2) &
+		// an honest responder at that!
+		Identity(resp_priv, responder) @ #init
+	) ==> Ex #t0. (
+		// implies that the responder leaked its key
+		K(resp_priv) @ #t0 & #t0 < #t2
+	)
+	"
+
+
+// <- e, ee, se                4
+// =============================
+// Encryption to a known recipient, weak forward secrecy if the sender's private 
+// key has been compromised. This payload is encrypted based on an ephemeral-ephemeral DH, 
+// and also based on an ephemeral-static DH involving the recipient's static key pair. 
+// However, the binding between the recipient's alleged ephemeral public and the 
+// recipient's static public key has only been verified based on DHs involving both 
+// those public keys and the sender's static private key. Thus, if the sender's 
+// static private key was previously compromised, the recipient's alleged ephemeral 
+// public key may have been forged by an active attacker. In this case, the attacker 
+// could later compromise the intended recipient's static private key to decrypt the 
+// payload (this is a variant of a "KCI" attack enabling a "weak forward secrecy" attack). 
+// Note that a future version of Noise might include signatures, 
+// which could improve this security property, but brings other trade-offs.
+
+// proof:
+// ======
+// 1. if two honests participants end up having payload2 leaked, 
+//    it MUST be because responder WAS compromised and initiator GETS compromised
+
+lemma payload2_dst_4_proof:
+	"
+	All id initiator init_priv responder resp_priv payload2 #init_responder #init_initiator #t2 #t3 . (
+		// for all honest responder and initiator
+		Identity(resp_priv, responder) @ #init_responder &
+		Identity(init_priv, initiator) @ #init_initiator &
+		// when responder receives a payload2 to a (maybe fake) initiator 
+		Sent2(id, responder, initiator, payload2) @ #t2 &
+		// and payload2 is leaked
+		K(payload2) @ #t3 
+	) ==> Ex #t1 #i . (
+		// implies that responder was leaked BEFORE
+		Reveal(responder) @ #t1 & #t1 < #t2 &
+		// and initiator is leaked at some point
+		Reveal(initiator) @ #i
+	)
+	"
+
+// ->                2          
+// ===================
+// Sender authentication resistant to key-compromise impersonation (KCI). 
+// The sender authentication is based on an ephemeral-static DH 
+// ("es" or "se") between the sender's static key pair and the recipient's 
+// ephemeral key pair. Assuming the corresponding private keys are secure, 
+// this authentication cannot be forged.
+
+// proof:
+// ======
+// 1. if two honests participants end up having app_data1 leaked,
+//    it MUST be because responder AND initiator ltk was leaked BEFORE
+
+lemma initiatorAppData_src_2:
+	"
+	All id initiator responder plaintext #t1 #t2 #i. (
+		// for all correct sending of appdata
+		SentAppData('initiator', id, initiator, responder, plaintext) @ #t1 &
+		ReceivedAppData('responder', id, responder, initiator, plaintext) @ #t2 &
+		// and the data leaked before or later
+		K(plaintext) @ #i
+	) ==> (
+		// it implies that the responder or initiator were leaked BEFORE
+		(Ex #before . Reveal(responder) @ #before & #before < #t1) |
+		(Ex #before . Reveal(initiator) @ #before & #before < #t1)
+	)
+	"
+
+///////////////////////////////////////
+// Lemmas: Identity Hiding
+///////////////////////////////////////
+//
+// see the Noise Protocol Framework specification
+// section 7.8. Identity hiding
+// 
+//            initiator      responder
+// IK             4              3
+//
+
+
+// initiator 4:
+// ============
+// Encrypted to responder's static public key, without 
+// forward secrecy. If an attacker learns the responder's 
+// private key they can decrypt the initiator's public key.
+
+lemma identity_initiator_4:
+	"
+	All initiator #t99 . (
+		// for all (honest) initiator that exist
+		(Ex id responder payload1 #i . Sent1(id, initiator, responder, payload1) @ #i) &
+		// and adversaries that know about this initiator's public key
+		K(initiator) @ #t99
+	) ==> (
+		// either reveal was called before
+		(Ex #k . Reveal(initiator) @ #k & #k < #t99) |
+		// or a responder (who had a session with the initiator) was breached
+		(Ex id responder payload1 #i #j . (
+				Received1(id, responder, initiator, payload1) @ #i & #i < #t99 &
+				Reveal(responder) @ #j & #j < #t99 &
+				not (responder = initiator)
+			)
+		)
+	)
+	"
+
+// responder 3:
+// ============
+// Not transmitted, but a passive attacker can check candidates 
+// for the responder's private key and determine whether the 
+// candidate is correct. An attacker could also replay a 
+// previously-recorded message to a new responder and determine 
+// whether the two responders are the "same" (i.e. are using 
+// the same static key pair) by whether the recipient accepts 
+// the message.
+
+// It looks like there is nothing we can prove here. 
+
+///////////////////////////////////////
 
 end
 
