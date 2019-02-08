@@ -336,9 +336,7 @@ exists-trace
 // ==============================
 // These lemmas check that some states can only happen only due to honest behavior.
 
-// TODO: include in all these that Reveal() never happened
-
-// session keys are negotiated by A and B => session was started by A and B prior
+// session keys are negotiated by honest peers => session was started by honest peers
 lemma CorrectPathToFinal:
 "
 	All id initiator responder c1 c2 #i #j . (
@@ -358,23 +356,21 @@ lemma CorrectPathToFinal:
 "
 
 // app data is sent and received correctly => session was honest
-// TODO: is this true though? the adversary can make up an initiator...
-// and this won't create a fact
 lemma CorrectPathToAppDataInitiator:
 "
-	All id me them plaintext  #t4 #t5 . (
-		SentAppData('responder', id, me, them, plaintext) @ #t4 & 
-		ReceivedAppData('initiator', id, them, me, plaintext) @ #t5 &
+	All id responder initiator plaintext  #t4 #t5 . (
+		SentAppData('responder', id, responder, initiator, plaintext) @ #t4 & 
+		ReceivedAppData('initiator', id, initiator, responder, plaintext) @ #t5 &
 		#t4 < #t5
 	)
 	==>
 	(
 		Ex #t1 #t2 #t3 c1 c2 payload1. 
 
-		Sent1(id, me, them, payload1) @t1 & 
-		Received1(id, them, me, payload1) @ #t2 &
-		Shared('responder', id, them, me, c1, c2) @ #t2 &
-		Shared('initiator', id, me, them, c1, c2) @ #t3 & 
+		Sent1(id, initiator, responder, payload1) @t1 & 
+		Received1(id, responder, initiator, payload1) @ #t2 &
+		Shared('responder', id, responder, initiator, c1, c2) @ #t2 &
+		Shared('initiator', id, initiator, responder, c1, c2) @ #t3 & 
 
 	 	#t1 < #t2 &
 	 	#t2 < #t3
@@ -385,11 +381,10 @@ lemma CorrectPathToAppDataInitiator:
 // Lemmas: Key Security 
 ///////////////////////////////////////
 //
-// TODO , TKTK
-// should probably add more stuff than just the noise properties
-// stuff like: keys cannot be extracted if the participants are honest and no leak has occured
+// These are generic security properties that we expect from such protocols
+//
 
-
+// private keys of peers never leak from protocol attacks
 lemma KeySecrecy:
 	"
 	All e_priv e_pub #i #j . (
@@ -400,6 +395,7 @@ lemma KeySecrecy:
 	)	==> Ex #k . (Reveal(e_pub) @ #k & #k < j) // it must be that it was revealed
 	"
 
+// session keys cannot leak in honest protocol
 lemma SessionSecrecy:
 	"
 	All id initiator responder init_priv resp_priv c1 c2 #i #j #t1 #t2 . (
@@ -418,6 +414,7 @@ lemma SessionSecrecy:
 	)
 	"
 
+// honest initiator can successfuly setup session with honest responder
 lemma InitiatorSession:
 	"
 	All id initiator responder resp_priv c1 c2 #i #t2 . (
@@ -436,6 +433,7 @@ lemma InitiatorSession:
 	)
 	"
 
+// honest responder can successfuly setup session with honest initiator
 lemma ResponderSession:
 	"
 	All id initiator responder init_priv c1 c2 #i #t2 . (
@@ -468,10 +466,7 @@ lemma ResponderSession:
 //   ->                2         5
 //   <-                2         5
 //
-//
-// TKTK
-// I think a better plan is to write the lemmas for all these numbers
-// and prove all of them. For example, always check if something is replayable. etc.
+
 
 // -> e, es, s, ss   1
 // ===================
@@ -511,6 +506,7 @@ exists-trace
 // ======
 // 1. for all sessions where both the initiator and responder are not corrupted => the adversary doesn't know the payload
 
+/*
 lemma payload1_src_1_proof:
 	"
 	All id initiator responder payload1 #i . (
@@ -525,6 +521,7 @@ lemma payload1_src_1_proof:
 		not (Ex #m . K(payload1) @ #m)
 	)
 	"
+*/
 
 // this should be equivalent:
 
@@ -538,7 +535,7 @@ lemma payload1_src_1_proof_eq:
 		not (Ex #m . K(payload1) @ #m) |
 		// or initiator (if honest) was compromised before the session happened
 		(Ex #k . Reveal(initiator) @ #k & #k < #i) |
-		// or responder was compromised before the session hapened
+		// or responder was compromised before the session happened
 		(Ex #k . Reveal(responder) @ #k & #k < #i)
 	)
 	"
@@ -623,33 +620,25 @@ lemma payload1_replay:
 // ephemeral key pair. Assuming the corresponding private keys are secure, 
 // this authentication cannot be forged.
 
-lemma payload1_src_2_check:
-	"
-	Ex id initiator responder payload2 #t0 #t2 . (
-		// payload2 was received
-		Received2(id, initiator, responder, payload2) @ #t2 &
-		// but was never sent honestly
-		not (Ex #t1 . Sent2(id, responder, initiator, payload2) @ #t1 & #t1 < #t2) & 
-		// implies responder corrupted
-		Reveal(responder) @ #t0 & #t0 < #t2
-	)
-	"
 
-lemma payload1_src_2_proof:
+// proof
+// =====
+// 1. compromise of payload2 can only mean that the responder WAS being impersonated
+
+lemma payload2_src_2_proof:
 	"
-	All id initiator responder resp_priv payload2 #init #t2 . (
+	All id initiator responder payload2 #t2 . (
 		// payload2 was received by an honest initiator
 		Received2(id, initiator, responder, payload2) @ #t2 &
 		// but was never sent honestly by the responder
-		not (Ex #t1 . Sent2(id, responder, initiator, payload2) @ #t1 & #t1 < #t2) &
-		// an honest responder at that!
-		Identity(resp_priv, responder) @ #init
-	) ==> Ex #t0. (
-		// implies that the responder leaked its key
-		K(resp_priv) @ #t0 & #t0 < #t2
+		not (Ex #t1 . Sent2(id, responder, initiator, payload2) @ #t1 & #t1 < #t2)
+		// (no need because there's always an honest responder)
+		// Identity(resp_priv, responder) @ #init
+	) ==> Ex #t0 . (
+		// implies that an honest responder leaked its key BEFORE
+		Reveal(responder) @ #t0 & #t0 < #t2
 	)
 	"
-
 
 // <- e, ee, se                4
 // =============================
@@ -670,6 +659,7 @@ lemma payload1_src_2_proof:
 // ======
 // 1. if two honests participants end up having payload2 leaked, 
 //    it MUST be because responder WAS compromised and initiator GETS compromised
+// 2. payload is not replayable
 
 lemma payload2_dst_4_proof:
 	"
@@ -679,13 +669,30 @@ lemma payload2_dst_4_proof:
 		Identity(init_priv, initiator) @ #init_initiator &
 		// when responder receives a payload2 to a (maybe fake) initiator 
 		Sent2(id, responder, initiator, payload2) @ #t2 &
-		// and payload2 is leaked
-		K(payload2) @ #t3 
-	) ==> Ex #t1 #i . (
-		// implies that responder was leaked BEFORE
-		Reveal(responder) @ #t1 & #t1 < #t2 &
-		// and initiator is leaked at some point
-		Reveal(initiator) @ #i
+		Received2(id, initiator, responder, payload2) @ #t3 & #t2 < #t3
+	) ==> (
+		// implies payload is never leaked
+		not (Ex #i . K(payload2) @ #i) |
+		(
+			Ex #t1 #i #j . (
+				// or it is leaked
+				K(payload2) @ #i &
+				// because responder was compromised before
+				K(resp_priv) @ #t1 & #t1 < #t2 &
+				// and initiator was compromised at some point
+				K(init_priv) @ #j
+			)
+		)
+	)
+	"
+
+lemma payload2_replay:
+	"
+	All id responder initiator payload2 #i .
+	// for all payload1 received
+	Received2(id, initiator, responder, payload2) @ #i ==> not (
+		// exists the same payload1 received later
+		Ex #j . Received2(id, initiator, responder, payload2) @ #j & #i < #j
 	)
 	"
 
